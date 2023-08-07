@@ -2,7 +2,6 @@
 C# class that implements a lightweight text editor--that accepts markup and is fitted with shortcuts--directly in the console window.
 
 # Info
----
 This class handles all the logic for writing text in the console
 The editor can be used for a variety of different things and comes
 with built-in shortcuts and other features such as markup and auto-
