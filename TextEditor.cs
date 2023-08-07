@@ -20,6 +20,8 @@ using System.Text.RegularExpressions;
  * copied over for the editor to function. The CtrlZ class stores the
  * previous states of the note that is being written, allowing the
  * implementation of the Ctrl+Z and Ctrl+Y shortcuts (undo & redo).
+ * The TextEditorColors class stores color hexes that are used when
+ * writing markup text in the editor.
  * 
  * Open the editor by instantiating a new TextEditor() object,
  * then calling textEditor.MainLoop() on that object to open.
