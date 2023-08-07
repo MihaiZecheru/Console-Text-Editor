@@ -184,6 +184,27 @@ internal class CtrlZ
 
 
 
+/// <summary>
+/// Each color corresponds to a shortcut for markup.
+/// Ctrl+0 = Color0, Ctrl+1 = Color1, etc.
+/// Used in the TextEditor class under the HandleMarkupKeybinds method
+/// <br/><br/>
+/// Note: this enum is made public to allow these colors to be changed
+/// </summary>
+public static class TextEditorColors
+{
+    public static string Color1 = "ffff6347";
+    public static string Color2 = "fff4a460";
+    public static string Color3 = "ffffff00";
+    public static string Color4 = "ff2e8b57";
+    public static string Color5 = "ff00Bfff";
+    public static string Color6 = "fff5deb3";
+    public static string Color7 = "ffff1493";
+    public static string Color8 = "ff00ffff";
+    public static string Color9 = "ff9370db";
+    public static string Color0 = "ff6495ed";
+}
+
 
 
 /// <summary>
@@ -1657,14 +1678,10 @@ internal sealed class TextEditor
     private void HandleMarkupKeybinds(ConsoleKeyInfo keyinfo)
     {
         /***
-            * Pressing one of these keybinds will
-            * insert a spectre.console markup style
-            * such as italics, underline, etc.
-            * 
-            * For colors, the user can press a number
-            * between 0 - 9, which he can map to a specific hex
-            * on his own by going to the settings via Alt+S
-            ***/
+         * Pressing one of these keybinds will
+         * insert a spectre.console markup style
+         * such as italics, underline, etc.
+        ***/
         List<char> _chars_to_add = new List<char>();
 
         switch (keyinfo.Key)
@@ -1704,7 +1721,7 @@ internal sealed class TextEditor
                 // User Color5 - Ctrl+5
                 else
                 {
-                    _chars_to_add.AddRange($"[{Program.Settings.Color5}][/]");
+                    _chars_to_add.AddRange($"[{TextEditorColors.Color5}][/]");
                 }
                 break;
 
@@ -1715,49 +1732,49 @@ internal sealed class TextEditor
 
             // User Color1 - Ctrl+1
             case ConsoleKey.D1:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color1}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color1}][/]");
                 break;
 
             // User Color2 - Ctrl+2
             case ConsoleKey.D2:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color2}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color2}][/]");
                 break;
 
             // User Color3 - Ctrl+3
             case ConsoleKey.D3:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color3}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color3}][/]");
                 break;
 
             // User Color4 - Ctrl+4
             case ConsoleKey.D4:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color4}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color4}][/]");
                 break;
 
             // User Color5 - Ctrl+5 is under the strikethrough method above (Ctrl+Shift+5)
 
             // User Color6 - Ctrl+6
             case ConsoleKey.D6:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color6}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color6}][/]");
                 break;
 
             // User Color7 - Ctrl+7
             case ConsoleKey.D7:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color7}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color7}][/]");
                 break;
 
             // User Color8 - Ctrl+8
             case ConsoleKey.D8:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color8}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color8}][/]");
                 break;
 
             // User Color9 - Ctrl+9
             case ConsoleKey.D9:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color9}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color9}][/]");
                 break;
 
             // User Color0 - Ctrl+0
             case ConsoleKey.D0:
-                _chars_to_add.AddRange($"[#{Program.Settings.Color0}][/]");
+                _chars_to_add.AddRange($"[#{TextEditorColors.Color0}][/]");
                 break;
 
             // No special keybind preseed
