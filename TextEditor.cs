@@ -16,7 +16,7 @@ using System.Text.RegularExpressions;
  * To use this editor in a project, copy this file into your project
  * and give the project a namespace by uncommenting the line above.
  * 
- * Please note that there are two classes in this file that need to be
+ * Please note that there are three classes in this file that need to be
  * copied over for the editor to function. The CtrlZ class stores the
  * previous states of the note that is being written, allowing the
  * implementation of the Ctrl+Z and Ctrl+Y shortcuts (undo & redo).
