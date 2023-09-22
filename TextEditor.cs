@@ -289,7 +289,11 @@ internal sealed class TextEditor
     /// <br/><br/>
     /// Call editor.Mainloop() to activate the editor
     /// </summary>
-    public Editor() { }
+    public Editor()
+    {
+        // Prevent Ctrl+C from closing the application as users might accidentally quit while copying a note's content
+        Console.TreatControlCAsInput = true;
+    }
 
     /// <summary>
     /// Open the Editor to edit existing text
@@ -302,7 +306,10 @@ internal sealed class TextEditor
     {
         this.editing_existing_note = true;
         this.isJson = isJson;
-        
+
+        // Prevent Ctrl+C from closing the application as users might accidentally quit while copying a note's content
+        Console.TreatControlCAsInput = true;
+
         // Split the note into lines
         string[] lines = existing_note.Split('\n');
 
