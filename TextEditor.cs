@@ -269,18 +269,17 @@ internal sealed class TextEditor
     /// Concatenate the note into a single string
     /// </summary>
     /// <param name="start">The index of the line to start concatenating from</param>
+    /// <param name="trim">If the note should be trimmed</param>
     /// <returns>The concatenated note which includes all lines from [start, lines.Count - 1]</returns>
-    private string GetNoteContent(int start)
+    private string GetNoteContent(int start, bool trim = false)
     {
         string s = string.Empty;
-
         for (int i = start; i < lines.Count; i++)
         {
             for (int j = 0; j < lines[i].Count; j++) s += lines[i][j];
             s += '\n';
         }
-
-        return s.Trim();
+        return trim ? s.Trim() : s;
     }
 
     // *** //
@@ -346,7 +345,7 @@ internal sealed class TextEditor
             {
                 if (this.CtrlS())
                 {
-                    note_body = Note.ParseLinksMarkup(GetNoteContent(0));
+                    note_body = Note.ParseLinksMarkup(GetNoteContent(0, true));
                     _isJson = this.isJson;
                     return true;
                 }
@@ -595,10 +594,32 @@ internal sealed class TextEditor
 
             /***
              * IMPORTANT: If the line has too many characters in it, overflow
-             * will be prevented by blocking new characters from being written
+             * will be prevented by entering a new line automatically and continuing
+             * on the next line
              ***/
-            if (keyinfo.Key == ConsoleKey.Tab && lines[cli].Count + 4 >= Console.BufferWidth - 2) continue;
-            else if (lines[cli].Count == Console.BufferWidth - 2) continue;
+            // The tab key enters multiple spaces so a separate check is needed
+            if ((keyinfo.Key == ConsoleKey.Tab && lines[cli].Count + 4 >= Console.BufferWidth - 2) || lines[cli].Count == Console.BufferWidth - 2)
+            {
+                /***
+                 * This code will trigger when the current line is full.
+                 * Text will automatically be moved to the next line, which
+                 * is done by creating a new line.
+                 * 
+                 * Automatically moving to the next line is useless if it's
+                 * done halfway through a word, though, so the entire word
+                 * needs to be moved.
+                 * 
+                 * This is done by moving the cursor/ci to the last space
+                 * and pressing enter there, which will move the entire word to the next line
+                 ***/
+                
+                ci = lines[cli].LastIndexOf(' ') + 1;
+                int chars_moved = lines[cli].Count - ci;
+                Console.CursorLeft = ci;
+                this.Enter();
+                ci += chars_moved;
+                Console.CursorLeft = ci;
+            }
 
             // Pressing TAB will add four spaces instead of a \t char
             if (keyinfo.Key == ConsoleKey.Tab)
@@ -655,7 +676,7 @@ internal sealed class TextEditor
             * An attempt will be made to compile the note prematurely, and if it fails,
             * the user will get a popup letting them know the note couldn't compile.
             ***/
-        string note = GetNoteContent(0);
+        string note = GetNoteContent(0, true);
         try
         {
             /*** Attempt to compile ***/
@@ -1208,7 +1229,8 @@ internal sealed class TextEditor
             states.AddState(lines, Tuple.Create(ci, cli));
             chars_pressed = 0;
         }
-        // If the cursor is at the very beginning, the current line should be appended to the previous line
+        // If the cursor is at the very beginning, the current line should be appended to the previous line if there is any text in front of the cursor
+        // Otherwise, the cursor should just move to the previous line
         else
         {
             // Nowhere to go if on the first line
@@ -1216,33 +1238,53 @@ internal sealed class TextEditor
 
             /***
              * IMPORTANT: If the line has too many characters in it, overflow
-             * will be prevented by blocking new characters from being written
+             * will be prevented by writing the characters that fit and leaving
+             * the rest on the current line.
+             * 
+             * If there is no text in the line, move the cursor to the end of the
+             * previous line and delete the line.
              ***/
-            if (lines[cli].Count + lines[cli - 1].Count >= Console.BufferWidth - 2) return;
-
+            if (lines[cli].Count != 0 && lines[cli - 1].Count >= Console.BufferWidth - 2) return;
             // Used for placing the cursor
             int prev_line_length = lines[cli - 1].Count;
-
-            // Append this line to the one before it
-            lines[cli - 1].AddRange(lines[cli]);
-
-            // Delete the line
-            lines.RemoveAt(cli--);
-
-            /*** Update the screen ***/
-
-            // Remember the position to go to
-            int cursor_pos = Console.CursorTop - 1;
-            ci = prev_line_length;
-
-            // There is too much text to wipe, so the best move is to clear everything and rewrite
-            int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
-            Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
-            Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
-
-            Console.Write(GetNoteContent(cli));
-            Console.SetCursorPosition(ci, cursor_pos);
-
+            // Append as much as possible from this line to the one before it
+            if (lines[cli].Count + lines[cli - 1].Count >= Console.BufferWidth - 2)
+            {
+                // If the line is too long, only append as much as possible
+                int amount_of_chars_to_append = Console.BufferWidth - 2 - lines[cli - 1].Count;
+                List<char> chars_to_append = lines[cli].GetRange(0, amount_of_chars_to_append);
+                lines[cli - 1].AddRange(chars_to_append);
+                lines[cli].RemoveRange(0, amount_of_chars_to_append);
+                // Rewrite current line (that was deleted from) - rewrite the remaining chars
+                Console.CursorLeft = 0;
+                Console.Write(new string(' ', Console.BufferWidth));
+                Console.CursorLeft = 0;
+                Console.Write(lines[cli].ToArray());
+                // Rewrite top line (where text was added to)
+                Console.CursorTop--;
+                // Set cursor to end of line
+                Console.CursorLeft = lines[--cli].Count - amount_of_chars_to_append;
+                Console.Write(chars_to_append.ToArray());
+                Console.CursorLeft -= amount_of_chars_to_append;
+                ci = Console.CursorLeft;
+            }
+            else
+            {
+                // Append the entire line
+                lines[cli - 1].AddRange(lines[cli]);
+                // Delete the line
+                lines.RemoveAt(cli--);
+                /*** Update the screen ***/
+                // Remember the position to go to
+                int cursor_pos = Console.CursorTop - 1;
+                ci = prev_line_length;
+                // There is too much text to wipe (would be every line below the current), so the best move is to clear everything and rewrite
+                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
+                Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
+                Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
+                Console.Write(GetNoteContent(cli));
+                Console.SetCursorPosition(ci, cursor_pos);
+            }
             // Save new state - pretty big change (moving the lines)
             states.AddState(lines, Tuple.Create(ci, cli));
             chars_pressed = 0;
@@ -1325,33 +1367,54 @@ internal sealed class TextEditor
 
             /***
              * IMPORTANT: If the line has too many characters in it, overflow
-             * will be prevented by blocking new characters from being written
+             * will be prevented by writing the characters that fit and leaving
+             * the rest on the current line.
+             * 
+             * If there is no text in the line, move the cursor to the end of the
+             * previous line and delete the line.
              ***/
-            if (lines[cli].Count + lines[cli - 1].Count >= Console.BufferWidth - 2) return;
-
+            if (lines[cli].Count != 0 && lines[cli - 1].Count >= Console.BufferWidth - 2) return;
             // Used for placing the cursor
             int prev_line_length = lines[cli - 1].Count;
-
-            // Append this line to the one before it
-            lines[cli - 1].AddRange(lines[cli]);
-
-            // Delete the line
-            lines.RemoveAt(cli--);
-
-            /*** Update the screen ***/
-
-            // Remember the position to go to
-            int cursor_pos = Console.CursorTop - 1;
-            ci = prev_line_length;
-
-            // There is too much text to wipe, so the best move is to clear everything and rewrite
-            int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
-            Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
-            Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
-
-            Console.Write(GetNoteContent(cli));
-            Console.SetCursorPosition(ci, cursor_pos);
-
+            // Append as much as possible from this line to the one before it
+            if (lines[cli].Count + lines[cli - 1].Count >= Console.BufferWidth - 2)
+            {
+                // If the line is too long, only append as much as possible
+                int amount_of_chars_to_append = Console.BufferWidth - 2 - lines[cli - 1].Count;
+                List<char> chars_to_append = lines[cli].GetRange(0, amount_of_chars_to_append);
+                lines[cli - 1].AddRange(chars_to_append);
+                lines[cli].RemoveRange(0, amount_of_chars_to_append);
+                // Rewrite current line (that was deleted from) - rewrite the remaining chars
+                Console.CursorLeft = 0;
+                Console.Write(new string(' ', Console.BufferWidth));
+                Console.CursorLeft = 0;
+                Console.Write(lines[cli].ToArray());
+                // Rewrite top line (where text was added to)
+                Console.CursorTop--;
+                // Set cursor to end of line
+                Console.CursorLeft = lines[--cli].Count - amount_of_chars_to_append;
+                Console.Write(chars_to_append.ToArray());
+                Console.CursorLeft -= amount_of_chars_to_append;
+                ci = Console.CursorLeft;
+            }
+            else
+            {
+                // Append the entire line
+                lines[cli - 1].AddRange(lines[cli]);
+                // Delete the line
+                lines.RemoveAt(cli--);
+                /*** Update the screen ***/
+                // Remember the position to go to
+                int cursor_pos = Console.CursorTop - 1;
+                ci = prev_line_length;
+                // There is too much text to wipe, so the best move is to clear everything and rewrite
+                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
+                Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
+                Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
+                Console.Write(GetNoteContent(cli));
+                Console.SetCursorPosition(ci, cursor_pos);
+            }
+            
             // Save new state - pretty big change (moving the lines)
             states.AddState(lines, Tuple.Create(ci, cli));
             chars_pressed = 0;
@@ -1599,7 +1662,7 @@ internal sealed class TextEditor
 
         // If cursor is inside opening markup tag, add the closing tag to the end
         // Ex: [green<cursor_here>] -> <Ctrl+/ pressed> -> [green]<cursor_here>[/]
-        if (lines[cli][ci] == ']')
+        while (lines[cli].Count > ci && lines[cli][ci] == ']')
         {
             ci++;
             Console.CursorLeft++;
@@ -1632,9 +1695,9 @@ internal sealed class TextEditor
     private void ClosingBracket(int bracket_type)
     {
         /***
-                 * IMPORTANT: If the line has too many characters in it, overflow
-                 * will be prevented by blocking new characters from being written
-                 ***/
+         * IMPORTANT: If the line has too many characters in it, overflow
+         * will be prevented by blocking new characters from being written
+        ***/
         if (lines[cli].Count + 2 >= Console.BufferWidth - 2) return;
 
         /*** Insert the two brackets ***/
@@ -1683,6 +1746,10 @@ internal sealed class TextEditor
          * Pressing one of these keybinds will
          * insert a spectre.console markup style
          * such as italics, underline, etc.
+         * 
+         * For colors, the user can press a number
+         * between 0 - 9, which he can map to a specific hex
+         * on his own by going to the settings via Alt+S
         ***/
         List<char> _chars_to_add = new List<char>();
 
