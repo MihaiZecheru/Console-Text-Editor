@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 // namespace project_namespace
 
 /**
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * This class handles all the logic for writing text in the console.
  * The editor can be used for a variety of different things, comes
  * with markup support and built-in shortcuts.
@@ -16,7 +17,9 @@ using System.Text.RegularExpressions;
  * To use this editor in a project, copy this file into your project
  * and give the project a namespace by uncommenting the line above.
  * 
- * Please note that there are three classes in this file that need to be
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *
+ * PLEASE NOTE: there are three classes in this file that need to be
  * copied over for the editor to function. The CtrlZ class stores the
  * previous states of the note that is being written, allowing the
  * implementation of the Ctrl+Z and Ctrl+Y shortcuts (undo & redo).
@@ -44,6 +47,7 @@ using System.Text.RegularExpressions;
  * is only JSON text.
  *  
  * Made by Mihai Zecheru (2023)
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  */
 
 internal class CtrlZ
