@@ -50,6 +50,52 @@ using System.Text.RegularExpressions;
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  */
 
+struct TextRange
+{
+    /// <summary>
+    /// The line the text range starts on, (the index, starts at 0)
+    /// </summary>
+    public int StartLineNumber { get; set; }
+
+    /// <summary>
+    /// The position of the starting character in <see cref="StartLineNumber"/>, (the index, starts at 0)
+    /// </summary>
+    public int StartCharacterPosition { get; set; }
+    
+    /// <summary>
+    /// The line the text range ends on (the index, starts at 0)
+    /// </summary>
+    public int EndLineNumber { get; set; }
+
+    /// <summary>
+    /// The position of the ending character in <see cref="EndLineNumber"/>, (the index, starts at 0)
+    /// </summary>
+    public int EndCharacterPosition { get; set; }
+
+    /// <summary>
+    /// Is the selected text from left to right? Starting somewhere and moving to the right
+    /// </summary>
+    public bool IsLeftToRight { get; set; }
+
+    public TextRange(int start_line_number, int start_character_position, int end_line_number, int end_character_position, bool is_left_to_right)
+    {
+        this.StartLineNumber = start_line_number;
+        this.StartCharacterPosition = start_character_position;
+        this.EndLineNumber = end_line_number;
+        this.EndCharacterPosition = end_character_position;
+        this.IsLeftToRight = is_left_to_right;
+    }
+
+    /// <summary>
+    /// Check if no text is selected
+    /// </summary>
+    /// <returns>True if no text is selected</returns>
+    public bool IsEmpty()
+    {
+        return StartLineNumber == -1 && EndLineNumber == -1 && StartCharacterPosition == -1 && EndCharacterPosition == -1;
+    }
+}
+
 internal class CtrlZ
 {
     /// <summary>
@@ -269,6 +315,11 @@ internal sealed class TextEditor
     /// </summary>
     private bool editing_existing_note = false;
 
+	/// <summary>
+	/// Keep track of the selected/highlighted text
+    /// </summary>
+    private TextRange selected_text_range = new(-1, -1, -1, -1, false);
+
     /// <summary>
     /// Concatenate the note into a single string
     /// </summary>
@@ -281,10 +332,43 @@ internal sealed class TextEditor
         for (int i = start; i < lines.Count; i++)
         {
             for (int j = 0; j < lines[i].Count; j++) s += lines[i][j];
-            s += '\n';
+			if (i != lines.Count - 1) s += '\n';
         }
         return trim ? s.Trim() : s;
     }
+	
+	/// <summary>
+    /// Get the currently selected text based on the selected_text_range field
+    /// </summary>
+    /// <returns></returns>
+    private string GetSelectedContent()
+    {
+        if (selected_text_range.IsEmpty()) return string.Empty;
+        string s = string.Empty;
+        for (int i = selected_text_range.StartLineNumber; i <= selected_text_range.EndLineNumber; i++)
+        {
+            if (lines.Count == i) break; // Will give IndexOutOfRangeException when lines[i] is accessed if no check
+            // Empty line
+            if (lines[i].Count == 0)
+            {
+                s += '\n';
+                continue;
+            }
+            
+            for (int j = 0; j < lines[i].Count; j++)
+            {
+                // Skip characters before the start of the selected text if on the starting line
+                if (i == selected_text_range.StartLineNumber && j < selected_text_range.StartCharacterPosition) continue;
+                // Skip characters after the end of the selected text if on the ending line
+                if (i == selected_text_range.EndLineNumber && j > selected_text_range.EndCharacterPosition) break;
+                // Add char
+                s += lines[i][j];
+            }
+            if (i != selected_text_range.EndLineNumber) s += '\n';
+        }
+        return s;
+    }
+
 
     // *** //
 
@@ -297,6 +381,10 @@ internal sealed class TextEditor
     {
         // Prevent Ctrl+C from closing the application as users might accidentally quit while copying a note's content
         Console.TreatControlCAsInput = true;
+		
+		// Default colors
+        Console.BackgroundColor = ConsoleColor.Black;
+        Console.ForegroundColor = ConsoleColor.White;
     }
 
     /// <summary>
@@ -309,7 +397,7 @@ internal sealed class TextEditor
     public Editor(string text, bool isJson)
     {
         this.editing_existing_note = true;
-        this.isJson = isJson;
+		this.isJson = IsJson;
 
         // Prevent Ctrl+C from closing the application as users might accidentally quit while copying a note's content
         Console.TreatControlCAsInput = true;
@@ -339,337 +427,483 @@ internal sealed class TextEditor
     }
 
     /// <summary>
-    /// Start the editor in the console and allow the user to edit / make their note
-    /// </summary>
-    /// <param name="note_body">Reference to a variable, that, when MainLoop finishes, will hold the content of the note the user has written</param>
-    /// <param name="_isJson">Reference to a variable, that, when MainLoop finishes, will hold a value indicating whether or not the note is JSON-Only</param>
-    /// <returns>A success value indicating whether or not the user finished writing their note</returns>
-    public bool MainLoop(ref string note_body, ref bool _isJson)
-    {
-        // Loop for getting input
-        while (true)
-        {
-            ConsoleKeyInfo keyinfo = Console.ReadKey(true);
+	/// Start the editor in the console and allow the user to edit / make their note
+	/// </summary>
+	/// <param name="note_body">Reference to a variable, that, when MainLoop finishes, will hold the content of the note the user has written</param>
+	/// <param name="_isJson">Reference to a variable, that, when MainLoop finishes, will hold a value indicating whether or not the note is JSON-Only</param>
+	/// <returns>A success value indicating whether or not the user finished writing their note</returns>
+	public bool MainLoop(ref string note_body, ref bool _isJson)
+	{
+		// If the program fails at any point, save the note and the error message in a crash log
+		// No indent to make it easier to read
+		try {
+		// Loop for getting input
+		while (true)
+		{
+			ConsoleKeyInfo keyinfo = Console.ReadKey(true);
+			bool ctrl = keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control);
+			bool shift = keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift);
 
-            // Create then save the note - Ctrl+S 
-            if (keyinfo.Key == ConsoleKey.S && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                if (this.CtrlS())
-                {
-                    note_body = Note.ParseLinksMarkup(GetNoteContent(0, true));
-                    _isJson = this.isJson;
-                    return true;
-                }
+			// Create then save the note - Ctrl+S 
+			if (keyinfo.Key == ConsoleKey.S && ctrl)
+			{
+				if (this.CtrlS())
+				{
+					note_body = Note.ParseLinksMarkup(GetNoteContent(0, true));
+					_isJson = this.isJson;
+					return true;
+				}
 
-                continue;
-            }
-            // Toggle JSON-Only
-            else if (keyinfo.Key == ConsoleKey.J && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlJ();
-                continue;
-            }
-            // Undo - Ctrl+Z
-            else if (keyinfo.Key == ConsoleKey.Z && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlZ();
-                continue;
-            }
-            // Redo - Ctrl+Y
-            else if (keyinfo.Key == ConsoleKey.Y && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlY();
-                continue;
-            }
-            // Create new line - Enter
-            else if (keyinfo.Key == ConsoleKey.Enter)
-            {
-                this.Enter();
-                continue;
-            }
-            // Move to beginning of line - Home
-            else if (keyinfo.Key == ConsoleKey.Home)
-            {
-                this.Home();
-                continue;
-            }
-            // Move to end of line - End
-            else if (keyinfo.Key == ConsoleKey.End)
-            {
-                this.End();
-                continue;
-            }
-            // Ctrl+Home doesn't register as an event, so Ctrl+H is used instead
-            // Move to beginning of text - Ctrl+H & Ctrl+UpArrow
-            else if ((keyinfo.Key == ConsoleKey.H || keyinfo.Key == ConsoleKey.UpArrow) && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlH();
-                continue;
-            }
-            // Ctrl+End doesn't register as an event, so Ctrl+E is used instead
-            // Move to end of text - Ctrl+E & Ctrl+DownArrow
-            else if ((keyinfo.Key == ConsoleKey.E || keyinfo.Key == ConsoleKey.DownArrow) && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlE();
-                continue;
-            }
-            // Move cursor left one word - Ctrl+LeftArrow
-            else if (keyinfo.Key == ConsoleKey.LeftArrow && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlLeftArrow();
-                continue;
-            }
-            // Move cursor left one character - LeftArrow
-            else if (keyinfo.Key == ConsoleKey.LeftArrow)
-            {
-                this.LeftArrow();
-                continue;
-            }
-            // Move cursor right one word - Ctrl+RightArrow
-            else if (keyinfo.Key == ConsoleKey.RightArrow && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlRightArrow();
-                continue;
-            }
-            // Move cursor right one character - RightArrow
-            else if (keyinfo.Key == ConsoleKey.RightArrow)
-            {
-                this.RightArrow();
-                continue;
-            }
-            // Move cursor down once - DownArrow
-            else if (keyinfo.Key == ConsoleKey.DownArrow)
-            {
-                this.DownArrow();
-                continue;
-            }
-            // Move cursor up once - UpArrow
-            else if (keyinfo.Key == ConsoleKey.UpArrow)
-            {
-                this.UpArrow();
-                continue;
-            }
-            // Delete previous word - Ctrl+Backspace
-            else if (keyinfo.Key == ConsoleKey.Backspace && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlBackspace();
-                continue;
-            }
-            // Delete previous character - Backspace
-            else if (keyinfo.Key == ConsoleKey.Backspace)
-            {
-                this.Backspace();
-                continue;
-            }
-            // Delete next word - Ctrl+Delete
-            else if (keyinfo.Key == ConsoleKey.Delete && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlDelete();
-                continue;
-            }
-            // Delete next character - Delete
-            else if (keyinfo.Key == ConsoleKey.Delete)
-            {
-                this.Delete();
-                continue;
-            }
-            // Delete current line - Ctrl+K
-            else if (keyinfo.Key == ConsoleKey.K && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlShiftK();
-                continue;
-            }
-            // Add closing markup tag [/] - Ctrl+/
-            else if (keyinfo.Key == ConsoleKey.Oem2 && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                this.CtrlForwardSlash();
-                continue;
-            }
-            // Add ending bracket when pressing the opening bracket [ => []
-            else if (keyinfo.Key == ConsoleKey.Oem4 && !keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
-            {
-                // TODO: this is because i assume people will paste json into the editor, which would cause the brackets to become messed up. todo is find a way to detect when text is being pasted to fix this issue
-                // Don't do this while in JSON-Only mode
-                if (!isJson)
-                {
-                    this.ClosingBracket(0);
-                    continue;
-                }
-            }
-            // Add ending bracket when pressing the opening bracket ( => ()
-            else if (keyinfo.Key == ConsoleKey.D9 && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
-            {
-                if (!isJson)
-                {
-                    this.ClosingBracket(1);
-                    continue;
-                }
-            }
-            // Add ending bracket when pressing the opening bracket { => {}
-            else if (keyinfo.Key == ConsoleKey.Oem4 && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
-            {
-                if (!isJson)
-                {
-                    this.ClosingBracket(2);
-                    continue;
-                }
-            }
-            // Ctrl+Q: quit without saving
-            else if (keyinfo.Key == ConsoleKey.Q && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                return false;
-            }
-            /***
-             * Markup keybinds
-             ***/
-            else if (keyinfo.Modifiers.HasFlag(ConsoleModifiers.Control))
-            {
-                // Don't do this while in JSON-Only mode
-                if (!isJson)
-                {
-                    this.HandleMarkupKeybinds(keyinfo);
-                    continue;
-                }
-            }
-            // Skip if the pressed key will **NOT** output an alphanumeric character
-            else if (
-                 // This check for LeftWindows etc. is because these few obscure keys are inbetween the range of 48 - 111, so they are not excluded by the first two checks of < 48 & > 111
-                 ((int)keyinfo.Key < 48 || (int)keyinfo.Key > 111 || keyinfo.Key == ConsoleKey.LeftWindows || keyinfo.Key == ConsoleKey.RightWindows || keyinfo.Key == ConsoleKey.Applications || keyinfo.Key == ConsoleKey.Sleep)
-                 && keyinfo.Key != ConsoleKey.Spacebar && keyinfo.Key != ConsoleKey.Tab
-                 /* OEM keys */
-                 && (int)keyinfo.Key < 186 && (int)keyinfo.Key > 223
-            )
-            {
-                // If the key is not alphanum, don't show it
-                continue;
-            }
+				continue;
+			}
+			// Toggle JSON-Only
+			else if (keyinfo.Key == ConsoleKey.J && ctrl)
+			{
+				this.CtrlJ();
+				continue;
+			}
+			// Undo - Ctrl+Z
+			else if (keyinfo.Key == ConsoleKey.Z && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlZ();
+				continue;
+			}
+			// Redo - Ctrl+Y
+			else if (keyinfo.Key == ConsoleKey.Y && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlY();
+				continue;
+			}
+			// Create new line - Enter
+			else if (keyinfo.Key == ConsoleKey.Enter)
+			{
+				// Replace with newline (Enter) if text is selected
+				if (select_mode) this.DeleteSelectedText();
+				// Runs regardless
+				this.Enter();
+				continue;
+			}
+			// Move to beginning of line - Home
+			else if (keyinfo.Key == ConsoleKey.Home)
+			{
+				if (select_mode) this.DeselectText();
+				this.Home();
+				continue;
+			}
+			// Move to end of line - End
+			else if (keyinfo.Key == ConsoleKey.End)
+			{
+				if (select_mode) this.DeselectText();
+				this.End();
+				continue;
+			}
+			// Move to beginning of text - Ctrl+H & Ctrl+UpArrow
+			// Ctrl+Home doesn't register as an event, so Ctrl+H is used instead
+			else if ((keyinfo.Key == ConsoleKey.H || keyinfo.Key == ConsoleKey.UpArrow) && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlH();
+				continue;
+			}
+			// Ctrl+End doesn't register as an event, so Ctrl+E is used instead
+			// Move to end of text - Ctrl+E & Ctrl+DownArrow
+			else if ((keyinfo.Key == ConsoleKey.E || keyinfo.Key == ConsoleKey.DownArrow) && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlE();
+				continue;
+			}
+			// TODO: for each of these shift+direction functions, do something to the selected_text_range
+			// Highlight text left one word - Ctrl+Shift+LeftArrow
+			else if (keyinfo.Key == ConsoleKey.LeftArrow && ctrl && shift)
+			{
+				this.CtrlShiftLeftArrow();
+				continue;
+			}
+			// Highlight text right one word - Ctrl+Shift+RightArrow
+			else if (keyinfo.Key == ConsoleKey.RightArrow && ctrl && shift)
+			{
+				this.CtrlShiftRightArrow();
+				continue;
+			}
+			// Highlight text left one character - Shift+LeftArrow
+			else if (keyinfo.Key == ConsoleKey.LeftArrow && shift)
+			{
+				this.ShiftLeftArrow();
+				continue;
+			}
+			// Highlight text right one character - Shift+RightArrow
+			else if (keyinfo.Key == ConsoleKey.RightArrow && shift)
+			{
+				this.ShiftRightArrow();
+				continue;
+			}
+			//// Highlight text to beginning of paragraph - Ctrl+Shift+Up
+			//else if (keyinfo.Key == ConsoleKey.UpArrow && ctrl && shift)
+			//{
+			//    this.CtrlShiftUp();
+			//    continue;
+			//}
+			//// Highlight text to end of paragraph - Ctrl+Shift+Down
+			//else if (keyinfo.Key == ConsoleKey.DownArrow && ctrl && shift)
+			//{
+			//    this.CtrlShiftDown();
+			//    continue;
+			//}
+			//// Highlight text up one line - Shift+UpArrow
+			//else if (keyinfo.Key == ConsoleKey.UpArrow && shift)
+			//{
+			//    this.ShiftUpArrow();
+			//    continue;
+			//}
+			//// Highlight text down one line - Shift+DownArrow
+			//else if (keyinfo.Key == ConsoleKey.DownArrow && shift)
+			//{
+			//    this.ShiftDownArrow();
+			//    continue;
+			//}
+			// Highlight all text - Ctrl+A
+			else if (keyinfo.Key == ConsoleKey.A && ctrl)
+			{
+				this.CtrlA();
+				continue;
+			}
+			// Copy selected text - Ctrl+C
+			else if (keyinfo.Key == ConsoleKey.C && ctrl)
+			{
+				// Note: Console.TreatControlCAsInput = true in Program.cs and on class initialization
+				this.CtrlC();
+				this.DeselectText();
+				continue;
+			}
+			// Move cursor left one word - Ctrl+LeftArrow
+			else if (keyinfo.Key == ConsoleKey.LeftArrow && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlLeftArrow();
+				continue;
+			}
+			// Move cursor left one character - LeftArrow
+			else if (keyinfo.Key == ConsoleKey.LeftArrow)
+			{
+				if (select_mode) this.DeselectText();
+				this.LeftArrow();
+				continue;
+			}
+			// Move cursor right one word - Ctrl+RightArrow
+			else if (keyinfo.Key == ConsoleKey.RightArrow && ctrl)
+			{
+				if (select_mode) this.DeselectText();
+				this.CtrlRightArrow();
+				continue;
+			}
+			// Move cursor right one character - RightArrow
+			else if (keyinfo.Key == ConsoleKey.RightArrow)
+			{
+				if (select_mode) this.DeselectText();
+				this.RightArrow();
+				continue;
+			}
+			// Move cursor down once - DownArrow
+			else if (keyinfo.Key == ConsoleKey.DownArrow)
+			{
+				if (select_mode) this.DeselectText();
+				this.DownArrow();
+				continue;
+			}
+			// Move cursor up once - UpArrow
+			else if (keyinfo.Key == ConsoleKey.UpArrow)
+			{
+				if (select_mode) this.DeselectText();
+				this.UpArrow();
+				continue;
+			}
+			// Delete previous word - Ctrl+Backspace
+			else if (keyinfo.Key == ConsoleKey.Backspace && ctrl)
+			{
+				if (select_mode) this.DeleteSelectedText();
+				else this.CtrlBackspace();
+				continue;
+			}
+			// Delete previous character - Backspace
+			else if (keyinfo.Key == ConsoleKey.Backspace)
+			{
+				if (select_mode) this.DeleteSelectedText();
+				else this.Backspace();
+				continue;
+			}
+			// Delete next word - Ctrl+Delete
+			else if (keyinfo.Key == ConsoleKey.Delete && ctrl)
+			{
+				if (select_mode) this.DeleteSelectedText();
+				else this.CtrlDelete();
+				continue;
+			}
+			// Delete next character - Delete
+			else if (keyinfo.Key == ConsoleKey.Delete)
+			{
+				if (select_mode) this.DeleteSelectedText();
+				else this.Delete();
+				continue;
+			}
+			// Delete current line - Ctrl+K
+			else if (keyinfo.Key == ConsoleKey.K && ctrl)
+			{
+				if (select_mode) this.DeleteSelectedText();
+				else this.CtrlShiftK();
+				continue;
+			}
+			// Add closing markup tag [/] - Ctrl+/
+			else if (keyinfo.Key == ConsoleKey.Oem2 && ctrl)
+			{
+				// Replace with closing tag if text is selected
+				if (select_mode) this.DeleteSelectedText();
+				// Runs regardless
+				this.CtrlForwardSlash();
+				continue;
+			}
+			// Add ending bracket when pressing the opening bracket [ => []
+			else if (keyinfo.Key == ConsoleKey.Oem4 && !shift)
+			{
+				// TODO: this is because i assume people will paste json into the editor, which would cause the brackets to become messed up. todo is find a way to detect when text is being pasted to fix this issue
+				// Don't do this while in JSON-Only mode
+				if (!isJson)
+				{
+					// Replace with closing bracket if text is selected
+					if (select_mode) this.DeleteSelectedText();
+					// Runs regardless
+					this.ClosingBracket(0);
+					continue;
+				}
+			}
+			// Add ending bracket when pressing the opening bracket ( => ()
+			else if (keyinfo.Key == ConsoleKey.D9 && shift)
+			{
+				if (!isJson)
+				{
+					// Replace with closing bracket if text is selected
+					if (select_mode) this.DeleteSelectedText();
+					// Runs regardless
+					this.ClosingBracket(1);
+					continue;
+				}
+			}
+			// Add ending bracket when pressing the opening bracket { => {}
+			else if (keyinfo.Key == ConsoleKey.Oem4 && shift)
+			{
+				if (!isJson)
+				{
+					// Replace with closing bracket if text is selected
+					if (select_mode) this.DeleteSelectedText();
+					// Runs regardless
+					this.ClosingBracket(2);
+					continue;
+				}
+			}
+			// Ctrl+Q: quit without saving
+			else if (keyinfo.Key == ConsoleKey.Q && ctrl)
+			{
+				return false;
+			}
+			/***
+			 * Markup keybinds
+			 ***/
+			else if (ctrl)
+			{
+				// Don't do this while in JSON-Only mode
+				if (!isJson)
+				{ // TODO: add something for selected text here
+					this.HandleMarkupKeybinds(keyinfo);
+					continue;
+				}
+			}
+			// Skip if the pressed key will **NOT** output an alphanumeric character
+			else if (
+				 // This check for LeftWindows etc. is because these few obscure keys are inbetween the range of 48 - 111, so they are not excluded by the first two checks of < 48 & > 111
+				 ((int)keyinfo.Key < 48 || (int)keyinfo.Key > 111 || keyinfo.Key == ConsoleKey.LeftWindows || keyinfo.Key == ConsoleKey.RightWindows || keyinfo.Key == ConsoleKey.Applications || keyinfo.Key == ConsoleKey.Sleep)
+				 && keyinfo.Key != ConsoleKey.Spacebar && keyinfo.Key != ConsoleKey.Tab
+				 /* OEM keys */
+				 && (int)keyinfo.Key < 186 && (int)keyinfo.Key > 223
+			)
+			{
+				// If the key is not alphanum, don't show it
+				continue;
+			}
 
-            /*** Done with main checks ***/
 
-            // Check if the key event was 'Alt+V', the keybind for returning to the 'view' menu
-            if (keyinfo.Key == ConsoleKey.V && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Alt)) return false;
+			// Check if the key event was 'Alt+V', the keybind for returning to the 'view' menu
+			if (keyinfo.Key == ConsoleKey.V && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Alt)) return false;
 
-            // Check if the key was TAB and if the cursor is within a set of markup tags [italic]cursor here[/]
-            // If the above are true, move the cursor to just outside the closing tag [/]
-            if (keyinfo.Key == ConsoleKey.Tab)
-            {
-                if (this.Tab()) continue;
-            }
+			/*** Done with main checks for shortcuts ***/
 
-            /***
-             * Because pressing [ will automatically add a closing bracket,
-             * If a user presses the closing bracket themselves,
-             * another bracket shouldn't be added
-             * 
-             * Instead the cursor will move one space to the right
-             * to simulate having added the bracket, despite it already being there
-             * This is something IDEs and text editors often implement
-             * 
-             * This if statements checks the same thing for regular parenthesis ()
-             * 
-             * The check in the middle is to prevent an IndexOutOfRange exception
-             ***/
-            if (
-                ci < lines[cli].Count
-                &&
-                (
-                    (keyinfo.Key == ConsoleKey.Oem6 && lines[cli][ci] == ']' && !keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
-                    ||
-                    (keyinfo.Key == ConsoleKey.Oem6 && lines[cli][ci] == '}' && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
-                    ||
-                    (keyinfo.Key == ConsoleKey.D0 && keyinfo.Modifiers.HasFlag(ConsoleModifiers.Shift) && lines[cli][ci] == ')')
-                )
-            )
-            {
-                ci++;
-                Console.CursorLeft++;
-                continue;
-            }
+			/***
+			 * Below is where the char that is a result of a regular keypress is added to the note
+			 ***/
 
-            /***
-             * The easiest way to fix the tab issue
-             * where it appears as 8 spaces instead of a single \t char
-             * is to treat the tab as <TAB_SIZE> spaces
-             * which is done by replacing it with <TAB_SIZE> spaces
-             * before it's saved to the note
-             * 
-             * This is done a a few lines further down
-             ***/
+			// Selected text replaces selected text when a character is pressed while text is selected
+			if (select_mode)
+			{
+				this.DeleteSelectedText();
+			}
 
-            /***
-             * Below is where the pressed char is added to the note
-             ***/
+			// Check if the key was TAB and if the cursor is within a set of markup tags [italic]cursor here[/]
+			// If the above are true, move the cursor to just outside the closing tag [/]
+			if (keyinfo.Key == ConsoleKey.Tab)
+			{
+				if (this.Tab()) continue;
+			}
 
-            // This array will typically hold only one key, but if tab is pressed, it will hold four spaces
-            List<char> chars_to_add = new List<char>() { keyinfo.KeyChar };
+			/***
+			 * Because pressing [ will automatically add a closing bracket,
+			 * If a user presses the closing bracket themselves,
+			 * another bracket shouldn't be added
+			 * 
+			 * Instead the cursor will move one space to the right
+			 * to simulate having added the bracket, despite it already being there
+			 * This is something IDEs and text editors often implement
+			 * 
+			 * This if statements checks the same thing for regular parenthesis ()
+			 * 
+			 * The check in the middle is to prevent an IndexOutOfRange exception
+			 ***/
+			if (
+				ci < lines[cli].Count
+				&&
+				(
+					(keyinfo.Key == ConsoleKey.Oem6 && lines[cli][ci] == ']' && !shift)
+					||
+					(keyinfo.Key == ConsoleKey.Oem6 && lines[cli][ci] == '}' && shift)
+					||
+					(keyinfo.Key == ConsoleKey.D0 && shift && lines[cli][ci] == ')')
+				)
+			)
+			{
+				ci++;
+				Console.CursorLeft++;
+				continue;
+			}
 
-            /***
-             * IMPORTANT: If the line has too many characters in it, overflow
-             * will be prevented by entering a new line automatically and continuing
-             * on the next line
-             ***/
-            // The tab key enters multiple spaces so a separate check is needed
-            if ((keyinfo.Key == ConsoleKey.Tab && lines[cli].Count + 4 >= Console.BufferWidth - 2) || lines[cli].Count == Console.BufferWidth - 2)
-            {
-                /***
-                 * This code will trigger when the current line is full.
-                 * Text will automatically be moved to the next line, which
-                 * is done by creating a new line.
-                 * 
-                 * Automatically moving to the next line is useless if it's
-                 * done halfway through a word, though, so the entire word
-                 * needs to be moved.
-                 * 
-                 * This is done by moving the cursor/ci to the last space
-                 * and pressing enter there, which will move the entire word to the next line
-                 ***/
-                
-                ci = lines[cli].LastIndexOf(' ') + 1;
-                int chars_moved = lines[cli].Count - ci;
-                Console.CursorLeft = ci;
-                this.Enter();
-                ci += chars_moved;
-                Console.CursorLeft = ci;
-            }
+			/***
+			 * The easiest way to fix the tab issue
+			 * where it appears as 8 spaces instead of a single \t char
+			 * is to treat the tab as <TAB_SIZE> spaces
+			 * which is done by replacing it with <TAB_SIZE> spaces
+			 * before it's saved to the note
+			 * 
+			 * This is done a a few lines further down
+			 ***/
 
-            // Pressing TAB will add four spaces instead of a \t char
-            if (keyinfo.Key == ConsoleKey.Tab)
-            {
-                chars_to_add = new string(' ', TAB_SIZE).ToList();
-            }
+			// This array will typically hold only one key, but if tab is pressed, it will hold four spaces
+			List<char> chars_to_add = new List<char>() { keyinfo.KeyChar };
 
-            // If added to the end of the line
-            if (ci == lines[cli].Count)
-            {
-                // Add the char(s) to the note
-                lines[cli].AddRange(chars_to_add);
-                Console.Write(chars_to_add.ToArray());
-                ci += chars_to_add.Count;
-            }
-            else
-            {
-                /*** Insert char(s) into the note ***/
-                lines[cli].InsertRange(ci, chars_to_add);
-                ci += chars_to_add.Count;
+			/***
+			 * IMPORTANT: If the line has too many characters in it, overflow
+			 * will be prevented by entering a new line automatically and continuing
+			 * on the next line
+			 ***/
+			// The tab key enters multiple spaces so a separate check is needed
+			if ((keyinfo.Key == ConsoleKey.Tab && lines[cli].Count + 4 >= Console.BufferWidth - 2) || lines[cli].Count == Console.BufferWidth - 2)
+			{
+				/***
+				 * This code will trigger when the current line is full.
+				 * Text will automatically be moved to the next line, which
+				 * is done by creating a new line.
+				 * 
+				 * Automatically moving to the next line is useless if it's
+				 * done halfway through a word, though, so the entire word
+				 * needs to be moved.
+				 * 
+				 * This is done by moving the cursor/ci to the last space
+				 * and pressing enter there, which will move the entire word to the next line
+				 ***/
+				
+				ci = lines[cli].LastIndexOf(' ') + 1;
+				int chars_moved = lines[cli].Count - ci;
+				Console.CursorLeft = ci;
+				this.Enter();
+				ci += chars_moved;
+				Console.CursorLeft = ci;
+			}
 
-                int previous_cursor_pos = Console.CursorLeft;
-                Console.CursorLeft = 0;
-                Console.Write(lines[cli].ToArray());
-                Console.CursorLeft = previous_cursor_pos + chars_to_add.Count;
-            }
+			// Pressing TAB will add four spaces instead of a \t char
+			if (keyinfo.Key == ConsoleKey.Tab)
+			{
+				chars_to_add = new string(' ', TAB_SIZE).ToList();
+			}
 
-            // Check save
-            chars_pressed++; // TAB will only count as one change despite adding <TAB_SIZE> spaces
-            if (chars_pressed >= save_every)
-            {
-                states.AddState(lines, Tuple.Create(ci, cli));
-                chars_pressed = 0;
-            }
-        }
-    }
+			// If added to the end of the line
+			if (ci == lines[cli].Count)
+			{
+				// Add the char(s) to the note
+				lines[cli].AddRange(chars_to_add);
+				Console.Write(chars_to_add.ToArray());
+				ci += chars_to_add.Count;
+			}
+			else
+			{
+				/*** Insert char(s) into the note ***/
+				lines[cli].InsertRange(ci, chars_to_add);
+				ci += chars_to_add.Count;
+
+				int previous_cursor_pos = Console.CursorLeft;
+				Console.CursorLeft = 0;
+				Console.Write(lines[cli].ToArray());
+				Console.CursorLeft = previous_cursor_pos + chars_to_add.Count;
+			}
+
+			// Check save
+			chars_pressed++; // TAB will only count as one change despite adding <TAB_SIZE> spaces
+			if (chars_pressed >= save_every)
+			{
+				states.AddState(lines, Tuple.Create(ci, cli));
+				chars_pressed = 0;
+			}
+		}
+		}
+		catch (Exception e)
+		{
+			string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+			string crashLogPath = Path.Combine(System.IO.Directory.GetCurrentDirectory(), "crash_log", timestamp);
+
+			// Create the crash log folder
+			Directory.CreateDirectory(crashLogPath);
+
+			// Save note
+			string _note = GetNoteContent(0);
+			File.WriteAllText(Path.Combine(crashLogPath, "note.txt"), _note);
+			TextCopy.ClipboardService.SetText(_note);
+
+			// Save error message
+			File.WriteAllText(Path.Combine(crashLogPath, "error.txt"), e.ToString());
+
+			// Show error message
+			string note_path = Path.Combine(crashLogPath, "note.txt");
+			Program.MessageBox((IntPtr)0, $"The application crashed due to an unknown error. Your note has been copied to clipboard and saved to\n\n{note_path}", "Application Crashed", 0);
+
+			try
+			{
+				// Open file explorer to the crash log
+				System.Diagnostics.Process.Start(crashLogPath);
+			} catch (Exception)
+			{
+				// If there is an access denied error, due to the application being run from inside C:/Users/<user>/, ask to copy (yes or no buttons)
+				int result = Program.MessageBox((IntPtr)0, "Error opening crash log in file explorer - Access to file denied. Do you want to copy the file path to clipboard?", "Error opening crash log", 4);
+
+				// If user presses 'Yes'
+				if (result == 6)
+				{
+					TextCopy.ClipboardService.SetText(crashLogPath);
+				}
+			}
+
+			// Close the editor
+			return false;
+		}
+	}
 
     // *** Editor Keypresses & Shortcuts *** //
-
     /// <summary>
     /// Ctrl+S - Save Note
     /// </summary>
@@ -678,7 +912,6 @@ internal sealed class TextEditor
     {
         // note len must be > 0
         if (GetNoteContent(0).Length <= 0) return false;
-
         /***
             * As users are allowed to write markup using [style]content[/] syntax,
             * there is a chance for user error to leave unmatched brackets, or to use
@@ -694,13 +927,11 @@ internal sealed class TextEditor
             if (isJson)
             {
                 JsonText json = new Spectre.Console.Json.JsonText(note);
-
                 // The .Build method is called when trying to print to the console,
                 // but the input should be captured so that it doesn't actually write anything
                 // to the console, and instead just calls the .Build method internally.
                 // If there is an error, it will be caught and the error message will be shown,
                 // with the text on the console remaining unchanged.
-
                 // Temporarily capture the console input
                 bool stop = false;
                 new Thread(() =>
@@ -711,10 +942,8 @@ internal sealed class TextEditor
                         Console.ReadKey(true);
                     }
                 }).Start();
-
                 // Invoke the .Build method
                 AnsiConsole.Write(json);
-
                 // Stop capturing console input
                 stop = true;
             }
@@ -722,10 +951,8 @@ internal sealed class TextEditor
             {
                 // Compile non-json note
                 new Markup(note);
-
                 // If the compilation doesn't work an error will be thrown
             }
-
             // return statement wont be reached if there is an error with compiling the Json/markup
             return true; // Note will be created shortly after
         }
@@ -737,13 +964,11 @@ internal sealed class TextEditor
                     $"\n\nError: {e.Message}" +
                     $"\n\nDo you want to open a JSON validator in your browser? Your note will be copied to clipboard.",
                 "JSON Syntax Error", 4);
-
                 // If user presses 'Yes'
                 if (result == 6)
                 {
                     // Go to json validator website
                     Process.Start(new ProcessStartInfo("cmd", $"/c start https://jsonlint.com/") { CreateNoWindow = true });
-
                     // Copy currently written text to clipboard for quickly pasting it in to check what's wrong
                     TextCopy.ClipboardService.SetText(note);
                 }
@@ -752,7 +977,6 @@ internal sealed class TextEditor
             {
                 Program.MessageBox((IntPtr)0, $"Check your note for any markup errors. Make sure all square brackets are escaped with [[ or ]].\n\nError: {e.Message}", "Markup Syntax Error", 0);
             }
-
             return false;
         }
     }
@@ -900,7 +1124,7 @@ internal sealed class TextEditor
         }
 
         // Move cursor to next line
-        Console.SetCursorPosition(0, cli + 1);
+		Console.SetCursorPosition(0, cli + 1); // +1 for header line
 
         // Check save
         chars_pressed += 2; // Enter counts as 2 chars pressed
@@ -946,8 +1170,92 @@ internal sealed class TextEditor
     {
         cli = lines.Count - 1;
         ci = lines[cli].Count;
-        Console.SetCursorPosition(ci, cli + 1);
+		Console.SetCursorPosition(0, cli + 1); // +1 for header line
     }
+
+	
+                SetDefaultBGandFG();
+                EnableSelectMode();
+                return;
+            }
+            // The start and end lines are the same (cli)
+            // As the highlighting direction is right, the character that will be selected is the current char
+            // Example: in "l^orem", (^ is cursor pos) going to the right will highlight the o, even though the cursor is at o
+            // Only one character is selected (ci), so the start and end character positions are equal to each other
+            // Is left to right, not right to left
+            selected_text_range = new(cli, ci, cli, ci + x, true);
+            // Higlight the newly selected character
+            SetSelectBGandFG();
+            Console.Write(lines[cli].GetRange(ci, x).ToArray());
+            ci += x;
+            SetDefaultBGandFG();
+            EnableSelectMode();
+        }
+        // Is Left to Right (towards end)
+        // Lengthen selection
+        else if (selected_text_range.IsLeftToRight)
+        {
+            // The third check in parnethesis, (selected_text_range.StartLineNumber == cli && selected_text_range.EndCharacterPosition == lines[cli].Count), is required because when the
+            // cursor is on the first line of the selection, the indexing is messed up for some reason, and is 1 more than it should be. So, if the cursor is on the first line of the selection, check for if the
+            // EndCharacterPosition == lines[cli].Count instead of (lines[cli].Count - 1)
+            // If the range cannot be extended any further right
+            if (lines[cli].Count == 0 || selected_text_range.EndCharacterPosition == lines[cli].Count - 1 || (selected_text_range.StartLineNumber == cli && selected_text_range.EndCharacterPosition == lines[cli].Count))
+            {
+                // Check if the current line is the last line; if it's possible to extend the selection to the next line
+                if (selected_text_range.EndLineNumber == lines.Count - 1) return;
+                selected_text_range.EndLineNumber++;
+                cli++;
+                ci = 0;
+                selected_text_range.EndCharacterPosition = 0;
+                Console.SetCursorPosition(ci, cli + 1); // +1 for header line
+                SetSelectBGandFG();
+                // If empty_line
+                if (lines[cli].Count == 0) Console.Write(' ');
+                else Console.Write(lines[cli][ci++]);
+                SetDefaultBGandFG();
+                return;
+            }
+            selected_text_range.EndCharacterPosition += x;
+            // Rewrite newly selected character with highlight
+            SetSelectBGandFG();
+            Console.Write(lines[cli].GetRange(ci, x).ToArray());
+            ci += x;
+            SetDefaultBGandFG();
+        }
+        // Is Right to Left (towards start)
+        // Shorten selection to the right
+        else
+        {
+            // The range gets shortened right
+            selected_text_range.StartCharacterPosition += x;
+            // Rewrite newly unselected character without highlight
+            SetDefaultBGandFG();
+            Console.Write(lines[cli].GetRange(ci, x).ToArray());
+            ci += x;
+        }
+    }
+    private void CtrlA()
+    {
+        this.selected_text_range = new(0, 0, lines.Count - 1, lines[lines.Count - 1].Count - 1, true);
+        // Highlight the selected text
+        Console.SetCursorPosition(0, 1); // +1 for header line
+        EnableSelectMode();
+        Console.Write(GetNoteContent(0));
+        cli = lines.Count - 1;
+        ci = lines[cli].Count;
+    }
+    /// <summary>
+    /// Ctrl+C - Copy selected text
+    /// </summary>
+    private void CtrlC()
+    {
+        string selected_text = GetSelectedContent();
+        
+        if (selected_text.Length != 0)
+        {
+            TextCopy.ClipboardService.SetText(selected_text);
+        }
+	}
 
     /// <summary>
     /// Ctrl+LeftArrow - Move one word left
@@ -1018,7 +1326,7 @@ internal sealed class TextEditor
             if (cli > 0)
             {
                 ci = lines[cli - 1].Count;
-                Console.SetCursorPosition(ci, Console.CursorTop - 1);
+				Console.SetCursorPosition(ci, Console.CursorTop - 1); // -1 for header line
                 cli--;
             }
         }
@@ -1089,7 +1397,7 @@ internal sealed class TextEditor
             // Move to the next line
             ci = 0;
             cli++;
-            Console.SetCursorPosition(0, Console.CursorTop + 1);
+            Console.SetCursorPosition(0, Console.CursorTop + 1); // +1 for header line
         }
     }
 
@@ -1133,7 +1441,7 @@ internal sealed class TextEditor
             // Move to the next line
             ci = 0;
             cli++;
-            Console.SetCursorPosition(0, Console.CursorTop + 1);
+            Console.SetCursorPosition(0, Console.CursorTop + 1); // +1 for header line
         }
     }
 
@@ -1168,7 +1476,7 @@ internal sealed class TextEditor
         // Move to the next line
         int left_pos = (Console.CursorLeft < lines[++cli].Count) ? Console.CursorLeft : lines[cli].Count;
         ci = left_pos;
-        Console.SetCursorPosition(left_pos, Console.CursorTop + 1);
+        Console.SetCursorPosition(left_pos, Console.CursorTop + 1); // +1 for header line
     }
 
     /// <summary>
@@ -1290,7 +1598,7 @@ internal sealed class TextEditor
                 int cursor_pos = Console.CursorTop - 1;
                 ci = prev_line_length;
                 // There is too much text to wipe (would be every line below the current), so the best move is to clear everything and rewrite
-                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
+                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1), -1 for header line
                 Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
                 Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
                 Console.Write(GetNoteContent(cli));
@@ -1419,7 +1727,7 @@ internal sealed class TextEditor
                 int cursor_pos = Console.CursorTop - 1;
                 ci = prev_line_length;
                 // There is too much text to wipe, so the best move is to clear everything and rewrite
-                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1)
+                int[] start_rewriting_from = new int[2] { Console.CursorLeft, Console.CursorTop - 1 }; // Rewrite the current line as well (top - 1), -1 for header line
                 Console.Write(new string(' ', (lines.Count - cli) * Console.BufferWidth));
                 Console.SetCursorPosition(start_rewriting_from[0], start_rewriting_from[1]);
                 Console.Write(GetNoteContent(cli));
@@ -1512,7 +1820,7 @@ internal sealed class TextEditor
 
             for (int i = 0; i < lines.Count - cli + 1; i++)
             {
-                Console.SetCursorPosition(0, Console.CursorTop + 1);
+                Console.SetCursorPosition(0, Console.CursorTop + 1); // +1 for header line
                 Console.Write(new string(' ', Console.BufferWidth));
             }
 
@@ -1649,7 +1957,7 @@ internal sealed class TextEditor
         }
 
         // Reset cursor loc
-        Console.SetCursorPosition(ci, cli + 1);
+        Console.SetCursorPosition(ci, cli + 1); // +1 for header line
 
         // Check save
         chars_pressed += 2; // Deleting the line counts as 2 chars pressed
@@ -1926,4 +2234,117 @@ internal sealed class TextEditor
 
         return false;
     }
+	
+	/// <summary>
+	/// Set Console.BackgroundColor and Console.ForegroundColor to the default colors (white FG, black BG)
+	/// </summary>
+	private void SetDefaultBGandFG()
+	{
+		Console.BackgroundColor = ConsoleColor.Black;
+		Console.ForegroundColor = ConsoleColor.White;
+	}
+
+	/// <summary>
+	/// Set Console.BackgroundColor and Console.ForegroundColor to the selected/highlighted text colors (black FG, white BG)
+	/// </summary>
+	private void SetSelectBGandFG()
+	{
+		Console.BackgroundColor = ConsoleColor.White;
+		Console.ForegroundColor = ConsoleColor.Black;
+	}
+
+	private bool select_mode = false;
+
+	/// <summary>
+	/// Enable highlight mode, meaning the colors background and foreground colors are inverted
+	/// </summary>
+	private void EnableSelectMode()
+	{
+		Console.BackgroundColor = ConsoleColor.White;
+		Console.ForegroundColor = ConsoleColor.Black;
+		select_mode = true;
+	}
+
+	/// <summary>
+	/// Disable highlight mode, meaning:<br/>
+	/// - the colors background and foreground colors are normal<br/>
+	/// - all text is unselected/unhighlighted, which is done by rewriting the note
+	/// </summary>
+	private void DeselectText()
+	{
+		// Current position
+		int left = Console.CursorLeft;
+		int top = Console.CursorTop;
+
+		// Change colors back to normal
+		Console.BackgroundColor = ConsoleColor.Black;
+		Console.ForegroundColor = ConsoleColor.White;
+		select_mode = false;
+
+		// Unselect text by rewriting
+		Console.SetCursorPosition(0, 1);
+		Console.Write(GetNoteContent(0).Replace("\n", " \n"));
+		Console.SetCursorPosition(left, top);
+
+		// Clear the selection
+		selected_text_range = new(-1, -1, -1, -1, false);
+	}
+
+	private void DeleteSelectedText()
+	{
+		this.DeselectText();
+		throw new NotImplementedException(); // TODO: Implement
+	}
+
+	/// <summary>
+	/// Find the amount of characters in the left direction to get to the next space character or to get to the start of the line (EOL)
+	/// </summary>
+	/// <param name="_cli">The index of the current line to look at</param>
+	/// <param name="_ci">The index of the current character in the cli to start looking from</param>
+	/// <returns>The amount of characters to get to the next space character or the start of the line (EOL), going left</returns>
+	private int CharsLeftUntillNextSpaceOrEOL(int _cli, int _ci)
+	{
+		if (_ci == 0) return 0;
+
+		int x = 0;
+		int search_buffer = 0;
+		while (x == 0)
+		{
+			for (int i = _ci - 1 - search_buffer; i >= 0; i--)
+			{
+				if (lines[_cli][i] == ' ') break;
+				x++;
+			}
+
+			search_buffer++;
+		}
+
+		return x + search_buffer - 1;
+	}
+
+	/// <summary>
+	/// Find the amount of characters in the right direction to get to the next space character or to get to the end of the line (EOL)
+	/// </summary>
+	/// <param name="_cli">The index of the current line to look at</param>
+	/// <param name="_ci">The index of the current character in the cli to start looking from</param>
+	/// <returns>The amount of characters to get to the next space character or the end of the line (EOL), going right</returns>
+	private int CharsRightUntilNextSpaceOrEOL(int _cli, int _ci)
+	{
+		if (_ci == lines[_cli].Count) return 0;
+
+		int x = 0;
+		int search_buffer = 0;
+		while (x == 0)
+		{
+			for (int i = _ci + 1 + search_buffer; i < lines[_cli].Count; i++)
+			{
+				if (lines[_cli][i] == ' ') break;
+				x++;
+			}
+
+			search_buffer++;
+		}
+
+		return x + search_buffer;
+	}
 }
